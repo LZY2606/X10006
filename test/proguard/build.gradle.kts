@@ -1,0 +1,76 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
+plugins {
+    kotlin("jvm")
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+val r8: Configuration = configurations.create("r8")
+
+dependencies {
+    implementation(project(":mordant-omnibus"))
+    implementation(project(":mordant-markdown"))
+    implementation(project(":mordant-coroutines"))
+    r8(libs.r8)
+}
+
+tasks.withType<KotlinJvmCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(JVM_17)
+    }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
+}
+
+val fatJar = tasks.register<Jar>("fatJar") {
+    archiveClassifier = "fat"
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+
+    from(sourceSets.main.get().output)
+
+    dependsOn(configurations.runtimeClasspath)
+    from({
+        configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }.map { zipTree(it) }
+    })
+
+    manifest {
+        attributes["Main-Class"] = "com.github.ajalt.mordant.main.R8SmokeTestKt"
+        attributes["Implementation-Version"] = archiveVersion
+    }
+
+    exclude("**/*.kotlin_metadata")
+    exclude("**/*.kotlin_module")
+    exclude("**/*.kotlin_builtins")
+    exclude("**/module-info.class")
+}
+
+
+tasks.register<JavaExec>("r8Jar") {
+    dependsOn(fatJar)
+
+    val r8File = layout.buildDirectory.file("libs/main-r8.jar")
+    val rulesFile =  project.file("src/main/rules.pro")
+
+    val fatJarFile = fatJar.flatMap { it.archiveFile }
+
+    inputs.files(fatJarFile, rulesFile)
+    outputs.file(r8File)
+
+    classpath(r8)
+    mainClass.set("com.android.tools.r8.R8")
+    args = listOf(
+        "--release",
+        "--classfile",
+        "--output", r8File.get().asFile.toString(),
+        "--pg-conf", rulesFile.path,
+        "--lib", System.getProperty("java.home").toString(),
+        fatJarFile.get().toString(),
+    )
+}

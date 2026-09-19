@@ -1,0 +1,137 @@
+name: Build
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'samples/**'
+      - '*.md'
+  push:
+    branches:
+      - 'master'
+    paths-ignore:
+      - 'docs/**'
+      - 'samples/**'
+      - '*.md'
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            EXTRA_GRADLE_ARGS: apiCheck :test:proguard:r8jar
+          - os: macos-latest
+            EXTRA_GRADLE_ARGS: >-
+              :mordant:compileNativeMainKotlinMetadata
+              :mordant:compilePosixMainKotlinMetadata
+              :mordant:compileAppleMainKotlinMetadata
+              :mordant:compileMacosMainKotlinMetadata
+              :mordant:compileWatchosMainKotlinMetadata
+              :mordant:compileTvosMainKotlinMetadata
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: 25
+          distribution: 'graalvm-community'
+          set-java-home: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Run tests
+        run: >-
+            ./gradlew
+            ${{matrix.EXTRA_GRADLE_ARGS}}
+            :mordant:check
+            :mordant-coroutines:check
+            :mordant-markdown:check
+            :test:graalvm:nativeTest
+            --stacktrace
+
+      - name: Run native tests with a tty (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: >-
+          script -qec
+          "./test/graalvm/build/native/nativeTestCompile/graalvm-tests
+          -Djunit.platform.listeners.uid.tracking.output.dir=test/graalvm/build/test-results/test/testlist"
+          /dev/null
+
+      - name: Run native tests with a tty (macOS)
+        if: ${{ matrix.os == 'macos-latest' }}
+        # script doesn't propagate the exit code on macOS, so pass it through a file
+        run: |
+          script -q /dev/null sh -c './test/graalvm/build/native/nativeTestCompile/graalvm-tests -Djunit.platform.listeners.uid.tracking.output.dir=test/graalvm/build/test-results/test/testlist; echo $? > /tmp/exit_code'
+          exit "$(cat /tmp/exit_code)"
+
+      - name: Upload R8 Jar
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-r8-jar
+          path: 'test/proguard/build/libs/main-r8.jar'
+          retention-days: 1
+
+      - name: Upload the build report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-report-${{ matrix.os }}
+          path: '**/build/reports'
+
+  test-jvm-compatibility:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: [17, 21, 25]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java-version }}
+      - name: Download R8 Jar
+        uses: actions/download-artifact@v8
+        with:
+          name: main-r8-jar
+          path: artifacts
+
+      - name: Run R8 Jar without a tty without enable-native-access all-unnamed
+        run: java -jar artifacts/main-r8.jar
+
+      - name: Run R8 Jar without a tty with enable-native-access all-unnamed
+        run: java --enable-native-access=ALL-UNNAMED -jar artifacts/main-r8.jar
+
+      - name: Run R8 Jar with a tty without enable-native-access all-unnamed
+        shell: 'script -q -e -c "bash {0}"'
+        run: java -jar artifacts/main-r8.jar
+
+      - name: Run R8 Jar with a tty with enable-native-access all-unnamed
+        shell: 'script -q -e -c "bash {0}"'
+        run: java --enable-native-access=ALL-UNNAMED -jar artifacts/main-r8.jar
+
+  publish-snapshot:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/master' && github.repository == 'ajalt/mordant' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Deploy to sonatype
+        # disable configuration cache due to https://github.com/gradle/gradle/issues/22779
+        run: ./gradlew publishToMavenCentral -PsnapshotVersion=true --no-configuration-cache
+    env:
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralPassword }}
+      ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKey }}
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralUsername }}

@@ -1,0 +1,57 @@
+plugins {
+    id("mordant-mpp-conventions")
+    id("mordant-publishing-conventions")
+}
+
+val posixSharedTargets = listOf(
+    "linuxX64", "linuxArm64",
+    "macosX64", "macosArm64",
+    "tvosX64", "tvosArm64", "tvosSimulatorArm64",
+    "watchosArm32", "watchosArm64", "watchosX64", "watchosSimulatorArm64",
+)
+
+kotlin {
+    jvm()
+    sourceSets {
+        all {
+            languageSettings.optIn("kotlinx.cinterop.ExperimentalForeignApi")
+            languageSettings.optIn("kotlin.experimental.ExperimentalNativeApi")
+        }
+        commonMain.dependencies {
+            api(libs.colormath)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotest)
+            implementation(libs.kotest.table)
+        }
+        jvmTest.dependencies {
+            api(libs.systemrules)
+        }
+        // Kotlin 2.0 changed the way MPP is compiled, so instead of copying shared sources to each
+        // target, it compiles intermediate sources separately. That means that code that previously
+        // compiled is broken due to errors like "declaration is using numbers with different bit
+        // widths". So we copy the shared sources to each target manually.
+        sourceSets {
+            // https://kotlinlang.org/docs/multiplatform-hierarchy.html#see-the-full-hierarchy-template
+            val posixMain = create("posixMain") { dependsOn(nativeMain.get()) }
+            linuxMain.get().dependsOn(posixMain)
+            appleMain.get().dependsOn(posixMain)
+            val appleNonDesktopMain = create("appleNonDesktopMain") { dependsOn(appleMain.get()) }
+            for (target in listOf(iosMain, tvosMain, watchosMain)) {
+                target.get().dependsOn(appleNonDesktopMain)
+            }
+            for (target in posixSharedTargets) {
+                sourceSets.getByName(target + "Main").kotlin.srcDirs("src/posixSharedMain/kotlin")
+            }
+        }
+    }
+}
+
+dokka {
+    // Dokka rejects source roots shared between source sets (https://github.com/Kotlin/dokka/issues/3701).
+    // These source sets contain nothing but the shared root, and everything in it is internal.
+    dokkaSourceSets.configureEach {
+        if (name.removeSuffix("Main") in posixSharedTargets) suppress.set(true)
+    }
+}
