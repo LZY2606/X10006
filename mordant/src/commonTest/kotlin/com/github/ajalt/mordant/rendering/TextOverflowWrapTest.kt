@@ -45,22 +45,29 @@ class TextOverflowWrapTest : RenderingTest() {
     )
 
     @Test
+    fun ellipsesEastAsianWideCharacters() = doTest(
+        """
+        ░あ…
+        """, OverflowWrap.ELLIPSES, text = "あいう", width = 3
+    )
+
+    @Test
     fun nowrap() = doTest(
         """
         ░The weather today is 21°C in Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch
-        """, OverflowWrap.ELLIPSES, Whitespace.NOWRAP
+        """, OverflowWrap.ELLIPSES, whitespace = Whitespace.NOWRAP
     )
 
     private fun doTest(
         expected: String,
         wrap: OverflowWrap,
+        text: String = """
+        ░The weather today is 21°C in
+        ░Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch
+        """.trimMargin("░"),
         whitespace: Whitespace = Whitespace.NORMAL,
         width: Int = 23,
     ) {
-        val text = """
-        ░The weather today is 21°C in
-        ░Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch
-        """.trimMargin("░")
         val widget = Text(
             text,
             whitespace = whitespace,

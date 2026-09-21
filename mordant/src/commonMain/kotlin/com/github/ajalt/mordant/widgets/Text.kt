@@ -2,7 +2,10 @@ package com.github.ajalt.mordant.widgets
 
 import com.github.ajalt.mordant.internal.DEFAULT_STYLE
 import com.github.ajalt.mordant.internal.EMPTY_LINES
+import com.github.ajalt.mordant.internal.codepointSequence
+import com.github.ajalt.mordant.internal.codepointToString
 import com.github.ajalt.mordant.internal.parseText
+import com.github.ajalt.mordant.internal.stringCellWidth
 import com.github.ajalt.mordant.rendering.*
 import com.github.ajalt.mordant.rendering.TextAlign.*
 import com.github.ajalt.mordant.terminal.Terminal
@@ -156,7 +159,7 @@ class Text internal constructor(
                         }
 
                         OverflowWrap.ELLIPSES -> {
-                            span = Span.word(span.text.take((wrapWidth - 1)) + "…", span.style)
+                            span = Span.word(span.text.takeCellWidth(wrapWidth - 1) + "…", span.style)
                         }
 
                         OverflowWrap.BREAK_WORD -> {
@@ -256,6 +259,18 @@ class Text internal constructor(
         val plain = lines.lines.flatten().joinToString("") { it.text }
         return "Text(${plain.take(25)}${if (plain.length > 25) "…" else ""})"
     }
+}
+
+private fun String.takeCellWidth(width: Int): String {
+    if (width <= 0) return ""
+    val result = StringBuilder()
+    for (codepoint in codepointSequence(this)) {
+        val character = codepointToString(codepoint)
+        val candidate = result.toString() + character
+        if (stringCellWidth(candidate) > width) break
+        result.append(character)
+    }
+    return result.toString()
 }
 
 internal fun Widget.withAlign(align: TextAlign, overflowWrap: OverflowWrap? = null): Widget {
